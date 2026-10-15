@@ -1,6 +1,6 @@
 use clap::{Args, Parser, Subcommand};
-use rigaid::classify;
-use rigaid::commands::{self, Mode};
+use rigorous::classify;
+use rigorous::commands::{self, Mode};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -22,7 +22,7 @@ enum Command {
         #[arg(long)]
         force: bool,
         /// Ollama model to classify with
-        #[arg(long, env = "RIGAID_MODEL", default_value = classify::DEFAULT_MODEL)]
+        #[arg(long, env = "RIGOROUS_MODEL", default_value = classify::DEFAULT_MODEL)]
         model: String,
     },
     /// Show the skeleton, classification and clips of a GLB
@@ -55,7 +55,7 @@ struct RetargetArguments {
     #[arg(short, long)]
     output: Option<PathBuf>,
     /// Ollama model that classifies rigs without a cached classification
-    #[arg(long, env = "RIGAID_MODEL", default_value = classify::DEFAULT_MODEL)]
+    #[arg(long, env = "RIGOROUS_MODEL", default_value = classify::DEFAULT_MODEL)]
     model: String,
 }
 

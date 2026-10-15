@@ -1,4 +1,4 @@
-# Rigaid
+# Rigorous
 
 ## Conventions
 

@@ -1,4 +1,4 @@
-# rigaid
+# rigorous
 
 Retarget animations between GLB files from the command line.
 
@@ -17,9 +17,9 @@ ollama pull qwen2.5:32b
 ## Commands
 
 ```
-rigaid retarget <source> <destination> [--mode replace|add|update] [--pose SOURCE [DESTINATION]] [--facing SOURCE [DESTINATION]] [-o OUTPUT]
-rigaid classify <file> [--force]
-rigaid info <file>
+rigorous retarget <source> <destination> [--mode replace|add|update] [--pose SOURCE [DESTINATION]] [--facing SOURCE [DESTINATION]] [-o OUTPUT]
+rigorous classify <file> [--force]
+rigorous info <file>
 ```
 
 Commands that write update the file in place unless `-o` is given. Put options after the file arguments.
@@ -31,7 +31,7 @@ Commands that write update the file in place unless `-o` is given. Put options a
 - `classify` maps the rig's bones to anatomical roles, caches the result and prints where the cache file is.
 - `info` prints the skeleton, the cached classification and the clips.
 
-rigaid only ever writes animation clips into a GLB.
+rigorous only ever writes animation clips into a GLB.
 
 ## How retargeting works
 
@@ -45,7 +45,7 @@ When they don't (one in a T-pose and the other in an A-pose, for example), give 
 
 Bones are classified into rig systems (spine, arms, legs, head and fingers) with the same prompts and schema as the [yello](https://github.com/playsthetic/yello) Blender extension. Two rigs are then paired role by role. Chains of different lengths, such as a three bone spine onto a two bone spine, are spread end to end.
 
-Classifications are cached on your machine (`~/Library/Caches/rigaid` on macOS, `~/.cache/rigaid` on Linux, or `RIGAID_CACHE`), keyed by the skeleton's bone names and hierarchy. Each rig is classified once, and renaming or reparenting a bone classifies it again. Edit a cache file to fix a wrong mapping.
+Classifications are cached on your machine (`~/Library/Caches/rigorous` on macOS, `~/.cache/rigorous` on Linux, or `RIGOROUS_CACHE`), keyed by the skeleton's bone names and hierarchy. Each rig is classified once, and renaming or reparenting a bone classifies it again. Edit a cache file to fix a wrong mapping.
 
 ### Retargeting
 
@@ -59,7 +59,7 @@ For every key, each mapped bone's world rotation change from the source referenc
 
 - Classification covers humanoids only.
 - Retargeted clips hold rotations plus hips and root translation. Scale keys and morph target weights are not carried over.
-- Removed clips leave their data in the file when it uses an extension whose references rigaid cannot follow.
+- Removed clips leave their data in the file when it uses an extension whose references rigorous cannot follow.
 - Sparse accessors, meshopt compression and external buffers are not supported yet.
 
 ## Development
@@ -68,7 +68,7 @@ For every key, each mapped bone's world rotation change from the source referenc
 cargo test
 ```
 
-The test fixtures in `tests/fixtures` are characters stripped to their nodes, skins and animations, with a `t-pose` clip. Each has a `.classification.json` next to it that the tests load into a private cache, so they never need Ollama. Regenerate a fixture with the following command, add a `t-pose` clip to it in your DCC, then copy the file `rigaid classify` prints next to it.
+The test fixtures in `tests/fixtures` are characters stripped to their nodes, skins and animations, with a `t-pose` clip. Each has a `.classification.json` next to it that the tests load into a private cache, so they never need Ollama. Regenerate a fixture with the following command, add a `t-pose` clip to it in your DCC, then copy the file `rigorous classify` prints next to it.
 
 ```bash
 python3 -I tests/fixtures/strip.py SOURCE.glb tests/fixtures/NAME.glb

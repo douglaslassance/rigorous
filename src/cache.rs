@@ -7,14 +7,14 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 /// Overrides the cache directory, mainly so tests stay isolated.
-pub const DIRECTORY_VARIABLE: &str = "RIGAID_CACHE";
+pub const DIRECTORY_VARIABLE: &str = "RIGOROUS_CACHE";
 
 pub type Bones = [(String, Option<String>)];
 
 pub fn directory() -> Option<PathBuf> {
     match std::env::var_os(DIRECTORY_VARIABLE) {
         Some(directory) => Some(PathBuf::from(directory)),
-        None => dirs::cache_dir().map(|directory| directory.join("rigaid")),
+        None => dirs::cache_dir().map(|directory| directory.join("rigorous")),
     }
 }
 
@@ -90,7 +90,7 @@ mod tests {
 
     #[test]
     fn store_then_load_round_trips() {
-        let directory = std::env::temp_dir().join(format!("rigaid-cache-{}", std::process::id()));
+        let directory = std::env::temp_dir().join(format!("rigorous-cache-{}", std::process::id()));
         let skeleton = bones(&[("Neck", None), ("Head", Some("Neck"))]);
         let systems = vec![System::Head {
             parent: None,

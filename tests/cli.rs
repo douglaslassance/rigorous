@@ -1,12 +1,12 @@
 //! End to end tests on the goblin fixtures, which carry a `t-pose` clip and a classification next to them.
 
 use glam::{Mat4, Quat};
-use rigaid::animation::{self, Clip};
-use rigaid::cache;
-use rigaid::glb::Glb;
-use rigaid::scene::{Scene, rotation_of};
-use rigaid::skeleton::Skeleton;
-use rigaid::systems;
+use rigorous::animation::{self, Clip};
+use rigorous::cache;
+use rigorous::glb::Glb;
+use rigorous::scene::{Scene, rotation_of};
+use rigorous::skeleton::Skeleton;
+use rigorous::systems;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
@@ -26,7 +26,7 @@ struct Workspace {
 
 /// Copy fixtures into a directory owned by one test, with their classifications in its own cache.
 fn workspace(test: &str, names: &[&str]) -> Workspace {
-    let directory = std::env::temp_dir().join(format!("rigaid-{}-{test}", std::process::id()));
+    let directory = std::env::temp_dir().join(format!("rigorous-{}-{test}", std::process::id()));
     let cache = directory.join("cache");
     std::fs::create_dir_all(&directory).unwrap();
     let paths = names
@@ -50,7 +50,7 @@ fn workspace(test: &str, names: &[&str]) -> Workspace {
 
 impl Workspace {
     fn run(&self, arguments: &[&str]) -> Output {
-        Command::new(env!("CARGO_BIN_EXE_rigaid"))
+        Command::new(env!("CARGO_BIN_EXE_rigorous"))
             .env(cache::DIRECTORY_VARIABLE, &self.cache)
             .args(arguments)
             .output()

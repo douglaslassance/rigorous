@@ -2,6 +2,7 @@
 
 pub mod animation;
 pub mod classify;
+pub mod commands;
 pub mod glb;
 pub mod retarget;
 pub mod scene;

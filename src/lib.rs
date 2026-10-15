@@ -3,3 +3,4 @@
 pub mod animation;
 pub mod glb;
 pub mod scene;
+pub mod skeleton;

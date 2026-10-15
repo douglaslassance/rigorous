@@ -1,6 +1,6 @@
 use clap::{Args, Parser, Subcommand};
 use rigaid::classify;
-use rigaid::commands::{self, Mode, PoseSource};
+use rigaid::commands::{self, Mode};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -15,22 +15,6 @@ struct Cli {
 enum Command {
     /// Retarget animations from one GLB onto another
     Retarget(RetargetArguments),
-    /// Write a single frame clip to use as a reference pose
-    Pose {
-        file: PathBuf,
-        /// Name of the clip to write
-        #[arg(long, default_value = "t-pose")]
-        name: String,
-        /// Pose to capture
-        #[arg(long, value_enum, default_value_t = PoseSource::Bind)]
-        from: PoseSource,
-        /// Replace the clip if it already exists
-        #[arg(long)]
-        overwrite: bool,
-        /// Write the result here instead of updating the file
-        #[arg(short, long)]
-        output: Option<PathBuf>,
-    },
     /// Classify the rig with a local model and cache the result
     Classify {
         file: PathBuf,
@@ -89,13 +73,6 @@ fn retarget(arguments: RetargetArguments) -> anyhow::Result<()> {
 fn main() -> ExitCode {
     let result = match Cli::parse().command {
         Command::Retarget(arguments) => retarget(arguments),
-        Command::Pose {
-            file,
-            name,
-            from,
-            overwrite,
-            output,
-        } => commands::pose(&file, &name, from, overwrite, output.as_deref()),
         Command::Classify { file, force, model } => commands::classify(&file, force, &model),
         Command::Info { file } => commands::info(&file),
     };

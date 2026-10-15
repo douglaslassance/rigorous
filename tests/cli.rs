@@ -335,7 +335,7 @@ fn retarget_explains_how_to_add_a_missing_reference_pose() {
         "a-pose",
     ]);
     assert!(!output.status.success());
-    assert!(stderr(&output).contains("--name a-pose"));
+    assert!(stderr(&output).contains("no 'a-pose' clip"));
 }
 
 /// Every accessor and buffer view in the file is still used by something.
@@ -388,17 +388,6 @@ fn classify_reads_the_cache_and_leaves_the_file_alone() {
     assert!(output.contains("(cached, pass --force"));
     assert!(output.contains(text(&workspace.cache)));
     assert_eq!(std::fs::read(&workspace.paths[0]).unwrap(), before);
-}
-
-#[test]
-fn pose_replaces_an_existing_clip_only_when_asked() {
-    let workspace = workspace("pose", &["blue_goblin.glb"]);
-    let paths = &workspace.paths;
-    assert!(stdout(&workspace.run(&["pose", text(&paths[0])])).contains("Skipped 't-pose'"));
-    assert!(
-        stdout(&workspace.run(&["pose", text(&paths[0]), "--overwrite"]))
-            .contains("Replaced 't-pose'")
-    );
 }
 
 #[test]

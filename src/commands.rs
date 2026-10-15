@@ -1,6 +1,6 @@
 //! The CLI commands.
 
-use crate::animation::{self, Channel, Clip, Interpolation, Property};
+use crate::animation::{self, Clip};
 use crate::cache;
 use crate::classify;
 use crate::glb::{Cleanup, Glb};
@@ -17,12 +17,6 @@ macro_rules! say {
         use std::io::Write;
         let _ = writeln!(std::io::stdout(), $($argument)*);
     }};
-}
-
-#[derive(Clone, Copy, Debug, clap::ValueEnum)]
-pub enum PoseSource {
-    Bind,
-    Default,
 }
 
 /// What happens to the animations the destination already has.
@@ -165,73 +159,6 @@ pub fn retarget(
         changed = true;
     }
     finish(&mut destination, destination_path, options.output, changed)
-}
-
-pub fn pose(
-    path: &Path,
-    name: &str,
-    from: PoseSource,
-    overwrite: bool,
-    output: Option<&Path>,
-) -> Result<()> {
-    let mut glb = Glb::read(path)?;
-    let scene = Scene::new(&glb.json)?;
-    let skeleton = skeleton_of(&glb, &scene, path)?;
-    let pose = match from {
-        PoseSource::Bind => {
-            if !glb
-                .array("skins")
-                .iter()
-                .any(|skin| skin.get("inverseBindMatrices").is_some())
-            {
-                bail!(
-                    "{} has no bind pose. Use `--from default` instead.",
-                    path.display()
-                );
-            }
-            skeleton::bind_pose(&glb, &scene)?
-        }
-        PoseSource::Default => scene.defaults.clone(),
-    };
-    let key = |node: usize, property: Property, values: Vec<f32>| Channel {
-        node,
-        property,
-        interpolation: Interpolation::Linear,
-        times: vec![0.0],
-        width: values.len(),
-        values,
-    };
-    let channels: Vec<Channel> = skeleton
-        .joints
-        .iter()
-        .flat_map(|&joint| {
-            let transform = pose[joint];
-            [
-                key(
-                    joint,
-                    Property::Translation,
-                    transform.translation.to_array().to_vec(),
-                ),
-                key(
-                    joint,
-                    Property::Rotation,
-                    transform.rotation.to_array().to_vec(),
-                ),
-                key(joint, Property::Scale, transform.scale.to_array().to_vec()),
-            ]
-        })
-        .collect();
-    let exists = animation::clip_names(&glb).iter().any(|clip| clip == name);
-    if exists && !overwrite {
-        say!("Skipped '{name}' (already exists, pass --overwrite to replace it)");
-        return finish(&mut glb, path, output, false);
-    }
-    if exists {
-        remove(&mut glb, &[name.to_owned()])?;
-    }
-    animation::add_clip(&mut glb, name, &channels)?;
-    say!("{} '{name}'", if exists { "Replaced" } else { "Added" });
-    finish(&mut glb, path, output, true)
 }
 
 pub fn classify(path: &Path, force: bool, model: &str) -> Result<()> {
@@ -385,8 +312,7 @@ fn reference_pose(
     };
     let clip = clips.iter().find(|clip| clip.name == label).with_context(|| {
         format!(
-            "{} has no '{label}' clip to use as the reference pose. Create one with `rigaid pose {} --name {label}`.",
-            path.display(),
+            "{} has no '{label}' clip to use as the reference pose. Add a single frame clip with that name.",
             path.display()
         )
     })?;

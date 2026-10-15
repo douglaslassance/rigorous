@@ -17,19 +17,18 @@ ollama pull qwen2.5:32b
 ## Commands
 
 ```
-retarjet combine <source> <destination> [--pose SOURCE [DESTINATION]] [--facing SOURCE [DESTINATION]] [--overwrite] [-o OUTPUT]
-retarjet replace <source> <destination> [--pose SOURCE [DESTINATION]] [--facing SOURCE [DESTINATION]] [-o OUTPUT]
+retarjet retarget <source> <destination> [--mode replace|add|update] [--pose SOURCE [DESTINATION]] [--facing SOURCE [DESTINATION]] [-o OUTPUT]
 retarjet pose <file> [--name t-pose] [--from bind|default] [--overwrite] [-o OUTPUT]
 retarjet classify <file> [--force]
 retarjet info <file>
 ```
 
-Every command that writes updates the destination in place unless `-o` is given. Put options after the file arguments.
+Commands that write update the file in place unless `-o` is given. Put options after the file arguments.
 
-`combine` and `replace` both retarget every clip of the source onto the destination's rig, which can have different bone names, hierarchy, proportions and bone axes.
-
-- `combine` keeps the destination's animations, so the result has both sets. A clip whose name already exists is skipped unless `--overwrite` is passed.
-- `replace` removes the destination's animations first, so the result only has the source's. A named destination reference pose clip is kept.
+- `retarget` retargets every clip of the source onto the destination's rig, which can have different bone names, hierarchy, proportions and bone axes. `--mode` decides what happens to the destination's own animations.
+  - `replace` (the default) removes them, so the result only has the source's.
+  - `add` keeps them and skips source clips whose name is taken.
+  - `update` keeps them and overwrites the ones a source clip shares a name with.
 - `pose` writes a single frame clip to use as a reference pose, captured from the skin's bind pose or the nodes' default transforms.
 - `classify` maps the rig's bones to anatomical roles, caches the result and prints where the cache file is.
 - `info` prints the skeleton, the cached classification and the clips.
@@ -42,7 +41,7 @@ retarjet only ever writes animation clips into a GLB.
 
 Motion is transferred relative to a reference pose on each rig. Without `--pose`, that is each file's default pose (the nodes' rest transforms), which works when both characters rest in the same stance.
 
-When they don't (one in a T-pose and the other in an A-pose, for example), give each file a clip that shows its character in a shared stance and name it with `--pose`. One name applies to both files, as in `--pose t-pose`. Pass two when they differ, as in `--pose TPose t-pose`. `retarjet pose` writes such a clip from the bind pose, which you can then adjust in your DCC. Named reference clips are never transferred.
+When they don't (one in a T-pose and the other in an A-pose, for example), give each file a clip that shows its character in a shared stance and name it with `--pose`. One name applies to both files, as in `--pose t-pose`. Pass two when they differ, as in `--pose TPose t-pose`. `retarjet pose` writes such a clip from the bind pose, which you can then adjust in your DCC. Named reference clips are never retargeted, replaced or overwritten.
 
 ### Bone mapping
 

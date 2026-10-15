@@ -26,12 +26,15 @@ pub enum PoseSource {
 }
 
 /// What happens to the animations the destination already has.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, clap::ValueEnum)]
 pub enum Mode {
-    /// Keep them, replacing same named ones only when `overwrite` is set.
-    Combine { overwrite: bool },
-    /// Remove them, except the destination's reference pose clip.
+    /// Remove them, so the result only has the source's animations
+    #[default]
     Replace,
+    /// Keep them, and skip source animations whose name is taken
+    Add,
+    /// Keep them, and overwrite the ones a source animation shares a name with
+    Update,
 }
 
 pub struct RetargetOptions<'a> {
@@ -108,7 +111,7 @@ pub fn retarget(
             .filter(|name| Some(name.as_str()) != destination_pose)
             .cloned()
             .collect(),
-        Mode::Combine { .. } => Vec::new(),
+        Mode::Add | Mode::Update => Vec::new(),
     };
     let mut additions = Vec::new();
     for clip in &source_clips {
@@ -133,11 +136,11 @@ pub fn retarget(
         }
         let replaced = match options.mode {
             Mode::Replace => false,
-            Mode::Combine { overwrite } => {
+            Mode::Add | Mode::Update => {
                 let exists = existing.contains(&clip.name);
-                if exists && !overwrite {
+                if exists && options.mode == Mode::Add {
                     say!(
-                        "Skipped '{}' (already exists, pass --overwrite to replace it)",
+                        "Skipped '{}' (already exists, use --mode update to overwrite it)",
                         clip.name
                     );
                     continue;

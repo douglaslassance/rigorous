@@ -13,19 +13,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Retarget animations onto a GLB, keeping the animations it already has
-    Combine {
-        #[command(flatten)]
-        retarget: RetargetArguments,
-        /// Replace animations that already exist under the same name
-        #[arg(long)]
-        overwrite: bool,
-    },
-    /// Retarget animations onto a GLB, removing the animations it had
-    Replace {
-        #[command(flatten)]
-        retarget: RetargetArguments,
-    },
+    /// Retarget animations from one GLB onto another
+    Retarget(RetargetArguments),
     /// Write a single frame clip to use as a reference pose
     Pose {
         file: PathBuf,
@@ -75,6 +64,9 @@ struct RetargetArguments {
         value_parser = ["+x", "-x", "+z", "-z"],
     )]
     facing: Vec<String>,
+    /// What happens to the animations the destination already has
+    #[arg(long, value_enum, default_value_t)]
+    mode: Mode,
     /// Write the result here instead of updating the destination
     #[arg(short, long)]
     output: Option<PathBuf>,
@@ -83,11 +75,11 @@ struct RetargetArguments {
     model: String,
 }
 
-fn retarget(arguments: RetargetArguments, mode: Mode) -> anyhow::Result<()> {
+fn retarget(arguments: RetargetArguments) -> anyhow::Result<()> {
     let options = commands::RetargetOptions {
         poses: &arguments.pose,
         facings: &arguments.facing,
-        mode,
+        mode: arguments.mode,
         output: arguments.output.as_deref(),
         model: &arguments.model,
     };
@@ -96,13 +88,7 @@ fn retarget(arguments: RetargetArguments, mode: Mode) -> anyhow::Result<()> {
 
 fn main() -> ExitCode {
     let result = match Cli::parse().command {
-        Command::Combine {
-            retarget: arguments,
-            overwrite,
-        } => retarget(arguments, Mode::Combine { overwrite }),
-        Command::Replace {
-            retarget: arguments,
-        } => retarget(arguments, Mode::Replace),
+        Command::Retarget(arguments) => retarget(arguments),
         Command::Pose {
             file,
             name,

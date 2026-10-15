@@ -163,10 +163,10 @@ fn assert_world_motion_matches(
 }
 
 #[test]
-fn combine_matches_world_motion_between_rigs() {
+fn retarget_matches_world_motion_between_rigs() {
     let workspace = workspace("between_rigs", &["blue_goblin.glb", "green_goblin.glb"]);
     let paths = &workspace.paths;
-    let output = workspace.run(&["combine", text(&paths[0]), text(&paths[1])]);
+    let output = workspace.run(&["retarget", text(&paths[0]), text(&paths[1])]);
     assert!(output.status.success(), "{}", stderr(&output));
     assert!(stdout(&output).contains("Added 'Squat'"));
     assert_world_motion_matches(
@@ -179,11 +179,11 @@ fn combine_matches_world_motion_between_rigs() {
 }
 
 #[test]
-fn combine_matches_world_motion_from_a_partially_keyed_rig() {
+fn retarget_matches_world_motion_from_a_partially_keyed_rig() {
     let workspace = workspace("partially_keyed", &["red_goblin.glb", "blue_goblin.glb"]);
     let paths = &workspace.paths;
     let output = workspace.run(&[
-        "combine",
+        "retarget",
         text(&paths[0]),
         text(&paths[1]),
         "--pose",
@@ -200,11 +200,11 @@ fn combine_matches_world_motion_from_a_partially_keyed_rig() {
 }
 
 #[test]
-fn combine_turns_motion_to_the_destination_facing() {
+fn retarget_turns_motion_to_the_destination_facing() {
     let workspace = workspace("facing", &["blue_goblin.glb", "red_goblin.glb"]);
     let paths = &workspace.paths;
     let output = workspace.run(&[
-        "combine",
+        "retarget",
         text(&paths[0]),
         text(&paths[1]),
         "--facing",
@@ -223,10 +223,10 @@ fn combine_turns_motion_to_the_destination_facing() {
 }
 
 #[test]
-fn combine_scales_root_motion_by_hip_height() {
+fn retarget_scales_root_motion_by_hip_height() {
     let workspace = workspace("root_motion", &["blue_goblin.glb", "green_goblin.glb"]);
     let paths = &workspace.paths;
-    let output = stdout(&workspace.run(&["combine", text(&paths[0]), text(&paths[1])]));
+    let output = stdout(&workspace.run(&["retarget", text(&paths[0]), text(&paths[1])]));
     let mapped = output
         .lines()
         .find(|line| line.starts_with("Mapped"))
@@ -254,24 +254,30 @@ fn combine_scales_root_motion_by_hip_height() {
 }
 
 #[test]
-fn combine_skips_existing_clips_unless_overwriting() {
+fn retarget_add_skips_taken_names_and_update_overwrites_them() {
     let workspace = workspace("overwrite", &["blue_goblin.glb", "red_goblin.glb"]);
     let paths = &workspace.paths;
     let (source, destination) = (text(&paths[0]), text(&paths[1]));
-    let pose = ["--pose", "t-pose"];
+    let pose = ["--pose", "t-pose", "--mode", "add"];
     assert!(
         workspace
-            .run(&[&["combine", source, destination][..], &pose].concat())
+            .run(&[&["retarget", source, destination][..], &pose].concat())
             .status
             .success()
     );
     let count = animation::clip_names(&Glb::read(&paths[1]).unwrap()).len();
-    let again = stdout(&workspace.run(&[&["combine", source, destination][..], &pose].concat()));
+    let again = stdout(&workspace.run(&[&["retarget", source, destination][..], &pose].concat()));
     assert!(again.contains("Skipped 'Squat' (already exists"));
     assert!(again.contains("Nothing to write"));
-    let replaced = stdout(
-        &workspace.run(&[&["combine", source, destination, "--overwrite"][..], &pose].concat()),
-    );
+    let replaced = stdout(&workspace.run(&[
+        "retarget",
+        source,
+        destination,
+        "--pose",
+        "t-pose",
+        "--mode",
+        "update",
+    ]));
     assert!(replaced.contains("Replaced 'Squat'"));
     let names = animation::clip_names(&Glb::read(&paths[1]).unwrap());
     assert_eq!(names.len(), count);
@@ -280,22 +286,34 @@ fn combine_skips_existing_clips_unless_overwriting() {
 }
 
 #[test]
-fn combine_without_pose_treats_pose_clips_as_regular_clips() {
+fn retarget_without_pose_treats_pose_clips_as_regular_clips() {
     let workspace = workspace("no_pose", &["blue_goblin.glb", "red_goblin.glb"]);
     let paths = &workspace.paths;
-    let output = stdout(&workspace.run(&["combine", text(&paths[0]), text(&paths[1])]));
+    let output = stdout(&workspace.run(&[
+        "retarget",
+        text(&paths[0]),
+        text(&paths[1]),
+        "--mode",
+        "add",
+    ]));
     assert!(output.contains("Skipped 't-pose' (already exists"));
     assert!(output.contains("Added 'Squat'"));
 }
 
 #[test]
-fn combine_leaves_the_rest_of_the_destination_untouched() {
+fn retarget_leaves_the_rest_of_the_destination_untouched() {
     let workspace = workspace("untouched", &["blue_goblin.glb", "green_goblin.glb"]);
     let paths = &workspace.paths;
     let before = Glb::read(&paths[1]).unwrap();
     assert!(
         workspace
-            .run(&["combine", text(&paths[0]), text(&paths[1])])
+            .run(&[
+                "retarget",
+                text(&paths[0]),
+                text(&paths[1]),
+                "--mode",
+                "add"
+            ])
             .status
             .success()
     );
@@ -306,11 +324,11 @@ fn combine_leaves_the_rest_of_the_destination_untouched() {
 }
 
 #[test]
-fn combine_explains_how_to_add_a_missing_reference_pose() {
+fn retarget_explains_how_to_add_a_missing_reference_pose() {
     let workspace = workspace("missing_pose", &["blue_goblin.glb", "green_goblin.glb"]);
     let paths = &workspace.paths;
     let output = workspace.run(&[
-        "combine",
+        "retarget",
         text(&paths[0]),
         text(&paths[1]),
         "--pose",
@@ -338,11 +356,11 @@ fn assert_no_unused_data(path: &Path) {
 }
 
 #[test]
-fn replace_keeps_only_the_source_animations() {
+fn retarget_replaces_the_destination_animations_by_default() {
     let workspace = workspace("replace", &["blue_goblin.glb", "red_goblin.glb"]);
     let paths = &workspace.paths;
     let output = workspace.run(&[
-        "replace",
+        "retarget",
         text(&paths[0]),
         text(&paths[1]),
         "--pose",

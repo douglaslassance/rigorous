@@ -2,6 +2,7 @@
 
 use anyhow::{Context, Result, bail};
 use serde_json::{Value, json};
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 
@@ -10,6 +11,21 @@ const VERSION: u32 = 2;
 const CHUNK_JSON: u32 = 0x4E4F_534A;
 const CHUNK_BIN: u32 = 0x004E_4942;
 const FLOAT: u32 = 5126;
+
+/// Extensions whose accessor and buffer view references the cleanup knows how to follow.
+const UNDERSTOOD_EXTENSION_PREFIXES: &[&str] = &[
+    "KHR_materials_",
+    "KHR_texture_",
+    "EXT_texture_",
+    "KHR_lights_punctual",
+    "KHR_mesh_quantization",
+    "KHR_draco_mesh_compression",
+    "EXT_mesh_gpu_instancing",
+    "KHR_animation_pointer",
+    "KHR_xmp_json_ld",
+    "FB_ngon_encoding",
+    "MSFT_texture_dds",
+];
 
 pub struct Glb {
     pub json: Value,
@@ -70,8 +86,12 @@ impl Glb {
     pub fn to_bytes(&mut self) -> Result<Vec<u8>> {
         if !self.bin.is_empty() {
             self.ensure_bin_buffer()?;
-            let length = self.bin.len();
-            self.array_mut("buffers")[0]["byteLength"] = json!(length);
+        }
+        let length = self.bin.len();
+        if let Some(buffer) = self.array_mut("buffers").first_mut()
+            && buffer.get("uri").is_none()
+        {
+            buffer["byteLength"] = json!(length);
         }
         let mut json_bytes = serde_json::to_vec(&self.json)?;
         pad(&mut json_bytes, b' ');
@@ -236,6 +256,77 @@ impl Glb {
         Ok(accessors.len() - 1)
     }
 
+    /// Drop the `candidates` nothing references any more, with the buffer views and bytes only they used.
+    pub fn remove_unused_accessors(&mut self, candidates: &BTreeSet<usize>) -> Result<Cleanup> {
+        let unknown = self
+            .array("extensionsUsed")
+            .iter()
+            .filter_map(Value::as_str)
+            .find(|extension| {
+                !UNDERSTOOD_EXTENSION_PREFIXES
+                    .iter()
+                    .any(|prefix| extension.starts_with(prefix))
+            });
+        if let Some(extension) = unknown {
+            return Ok(Cleanup::Skipped(extension.to_owned()));
+        }
+        let accessor_count = self.array("accessors").len();
+        let mut referenced = BTreeSet::new();
+        visit_accessor_references(&mut self.json, |value| {
+            referenced.extend(as_usize(Some(value)));
+        });
+        let dead: BTreeSet<usize> = candidates
+            .iter()
+            .copied()
+            .filter(|index| *index < accessor_count && !referenced.contains(index))
+            .collect();
+        if dead.is_empty() {
+            return Ok(Cleanup::Done);
+        }
+        let view_candidates: BTreeSet<usize> = dead
+            .iter()
+            .filter_map(|&index| as_usize(self.array("accessors")[index].get("bufferView")))
+            .collect();
+        retain_indices(self.array_mut("accessors"), &dead);
+        let accessor_map = renumber(accessor_count, &dead);
+        visit_accessor_references(&mut self.json, |value| rewrite(value, &accessor_map));
+
+        let view_count = self.array("bufferViews").len();
+        let mut referenced_views = BTreeSet::new();
+        visit_buffer_view_references(&mut self.json, |value| {
+            referenced_views.extend(as_usize(Some(value)));
+        });
+        let dead_views: BTreeSet<usize> = view_candidates
+            .into_iter()
+            .filter(|index| *index < view_count && !referenced_views.contains(index))
+            .collect();
+        let old = std::mem::take(&mut self.bin);
+        let mut bin = Vec::with_capacity(old.len());
+        let views = self.array_mut("bufferViews");
+        retain_indices(views, &dead_views);
+        for view in views.iter_mut() {
+            if as_usize(view.get("buffer")).unwrap_or(0) != 0 {
+                continue;
+            }
+            let offset = as_usize(view.get("byteOffset")).unwrap_or(0);
+            let length =
+                as_usize(view.get("byteLength")).context("buffer view has no byteLength")?;
+            let bytes = old
+                .get(offset..offset + length)
+                .context("buffer view reaches past the binary chunk")?;
+            // Keeping each view's offset modulo 4 keeps every accessor inside it aligned.
+            while bin.len() % 4 != offset % 4 {
+                bin.push(0);
+            }
+            view["byteOffset"] = json!(bin.len());
+            bin.extend_from_slice(bytes);
+        }
+        self.bin = bin;
+        let view_map = renumber(view_count, &dead_views);
+        visit_buffer_view_references(&mut self.json, |value| rewrite(value, &view_map));
+        Ok(Cleanup::Done)
+    }
+
     fn ensure_bin_buffer(&mut self) -> Result<()> {
         let buffers = self.array_mut("buffers");
         if buffers.is_empty() {
@@ -247,6 +338,115 @@ impl Glb {
             );
         }
         Ok(())
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum Cleanup {
+    Done,
+    /// Unused data was kept because this extension may reference it in ways the cleanup cannot follow.
+    Skipped(String),
+}
+
+fn visit_accessor_references(json: &mut Value, mut visit: impl FnMut(&mut Value)) {
+    for mesh in items(json, "meshes") {
+        for primitive in items(mesh, "primitives") {
+            values(primitive.get_mut("attributes")).for_each(&mut visit);
+            if let Some(indices) = primitive.get_mut("indices") {
+                visit(indices);
+            }
+            for target in items(primitive, "targets") {
+                values(Some(target)).for_each(&mut visit);
+            }
+        }
+    }
+    for skin in items(json, "skins") {
+        if let Some(matrices) = skin.get_mut("inverseBindMatrices") {
+            visit(matrices);
+        }
+    }
+    for animation in items(json, "animations") {
+        for sampler in items(animation, "samplers") {
+            for key in ["input", "output"] {
+                if let Some(accessor) = sampler.get_mut(key) {
+                    visit(accessor);
+                }
+            }
+        }
+    }
+    for node in items(json, "nodes") {
+        values(node.pointer_mut("/extensions/EXT_mesh_gpu_instancing/attributes"))
+            .for_each(&mut visit);
+    }
+}
+
+fn visit_buffer_view_references(json: &mut Value, mut visit: impl FnMut(&mut Value)) {
+    for accessor in items(json, "accessors") {
+        for pointer in [
+            "/bufferView",
+            "/sparse/indices/bufferView",
+            "/sparse/values/bufferView",
+        ] {
+            if let Some(view) = accessor.pointer_mut(pointer) {
+                visit(view);
+            }
+        }
+    }
+    for image in items(json, "images") {
+        if let Some(view) = image.get_mut("bufferView") {
+            visit(view);
+        }
+    }
+    for mesh in items(json, "meshes") {
+        for primitive in items(mesh, "primitives") {
+            if let Some(view) =
+                primitive.pointer_mut("/extensions/KHR_draco_mesh_compression/bufferView")
+            {
+                visit(view);
+            }
+        }
+    }
+}
+
+fn items<'a>(value: &'a mut Value, key: &str) -> impl Iterator<Item = &'a mut Value> {
+    value
+        .get_mut(key)
+        .and_then(Value::as_array_mut)
+        .into_iter()
+        .flatten()
+}
+
+fn values(value: Option<&mut Value>) -> impl Iterator<Item = &mut Value> {
+    value
+        .and_then(Value::as_object_mut)
+        .into_iter()
+        .flat_map(|object| object.values_mut())
+}
+
+fn retain_indices(array: &mut Vec<Value>, removed: &BTreeSet<usize>) {
+    let mut index = 0;
+    array.retain(|_| {
+        index += 1;
+        !removed.contains(&(index - 1))
+    });
+}
+
+/// New index of every old index, `None` for the removed ones.
+fn renumber(count: usize, removed: &BTreeSet<usize>) -> Vec<Option<usize>> {
+    let mut next = 0;
+    (0..count)
+        .map(|index| {
+            (!removed.contains(&index)).then(|| {
+                next += 1;
+                next - 1
+            })
+        })
+        .collect()
+}
+
+fn rewrite(value: &mut Value, map: &[Option<usize>]) {
+    if let Some(&Some(new)) = as_usize(Some(value)).and_then(|old| map.get(old)) {
+        *value = json!(new);
     }
 }
 
@@ -333,6 +533,59 @@ mod tests {
             vec![0.0, 0.5, 1.0]
         );
         assert_eq!(bytes.len() % 4, 0);
+    }
+
+    /// A mesh accessor, then two animations that share their input accessor.
+    fn with_mesh_and_animations() -> Glb {
+        let mut glb = empty();
+        let position = glb
+            .append_accessor(&[1.0, 2.0, 3.0], "VEC3", false)
+            .unwrap();
+        let input = glb.append_accessor(&[0.0, 1.0], "SCALAR", true).unwrap();
+        let walk = glb.append_accessor(&[0.0; 8], "VEC4", false).unwrap();
+        let run = glb.append_accessor(&[5.0; 8], "VEC4", false).unwrap();
+        glb.json["meshes"] = json!([{"primitives": [{"attributes": {"POSITION": position}}]}]);
+        glb.json["animations"] = json!([
+            {"name": "Walk", "channels": [], "samplers": [{"input": input, "output": walk}]},
+            {"name": "Run", "channels": [], "samplers": [{"input": input, "output": run}]},
+        ]);
+        glb
+    }
+
+    #[test]
+    fn removing_an_animation_drops_only_data_nothing_else_uses() {
+        let mut glb = with_mesh_and_animations();
+        let length = glb.bin.len();
+        glb.array_mut("animations").remove(0);
+        let cleanup = glb
+            .remove_unused_accessors(&BTreeSet::from([1, 2]))
+            .unwrap();
+        assert_eq!(cleanup, Cleanup::Done);
+        assert_eq!(glb.array("accessors").len(), 3);
+        assert_eq!(glb.array("bufferViews").len(), 3);
+        assert_eq!(glb.bin.len(), length - 32);
+        assert_eq!(
+            glb.json["animations"][0]["samplers"][0],
+            json!({"input": 1, "output": 2})
+        );
+        assert_eq!(glb.read_accessor(0).unwrap().values, vec![1.0, 2.0, 3.0]);
+        assert_eq!(glb.read_accessor(1).unwrap().values, vec![0.0, 1.0]);
+        assert_eq!(glb.read_accessor(2).unwrap().values, vec![5.0; 8]);
+        let bytes = glb.to_bytes().unwrap();
+        assert_eq!(
+            Glb::parse(&bytes).unwrap().json["buffers"][0]["byteLength"],
+            json!(glb.bin.len())
+        );
+    }
+
+    #[test]
+    fn cleanup_leaves_files_with_unknown_extensions_alone() {
+        let mut glb = with_mesh_and_animations();
+        glb.json["extensionsUsed"] = json!(["VENDOR_mystery"]);
+        glb.array_mut("animations").remove(0);
+        let cleanup = glb.remove_unused_accessors(&BTreeSet::from([2])).unwrap();
+        assert_eq!(cleanup, Cleanup::Skipped("VENDOR_mystery".into()));
+        assert_eq!(glb.array("accessors").len(), 4);
     }
 
     #[test]

@@ -489,7 +489,7 @@ fn place(
         return Ok(false);
     }
     if exists {
-        animation::remove_clip(glb, name);
+        animation::remove_clips(glb, &[name.to_owned()])?;
     } else {
         existing.push(name.to_owned());
     }

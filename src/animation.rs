@@ -1,10 +1,11 @@
 //! Reading, sampling and writing glTF animation clips.
 
-use crate::glb::{Glb, as_usize};
+use crate::glb::{Cleanup, Glb, as_usize};
 use crate::scene::Transform;
 use anyhow::{Context, Result, bail};
 use glam::{Quat, Vec3};
 use serde_json::{Value, json};
+use std::collections::BTreeSet;
 
 const TIME_EPSILON: f32 = 1e-5;
 
@@ -277,11 +278,31 @@ pub fn clip_names(glb: &Glb) -> Vec<String> {
         .collect()
 }
 
-/// Remove clips named `name`; their accessors stay in the file unreferenced.
-pub fn remove_clip(glb: &mut Glb, name: &str) {
-    // TODO: Garbage collect accessors and buffer views orphaned by removed clips.
-    glb.array_mut("animations")
-        .retain(|animation| animation.get("name").and_then(Value::as_str) != Some(name));
+/// Remove the clips with these names, along with the data only they used.
+pub fn remove_clips(glb: &mut Glb, names: &[String]) -> Result<Cleanup> {
+    let all = clip_names(glb);
+    let mut candidates = BTreeSet::new();
+    let mut index = 0;
+    glb.array_mut("animations").retain(|animation| {
+        index += 1;
+        let remove = names.contains(&all[index - 1]);
+        if remove {
+            for sampler in animation
+                .get("samplers")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
+                candidates.extend(
+                    ["input", "output"]
+                        .iter()
+                        .filter_map(|key| as_usize(sampler.get(*key))),
+                );
+            }
+        }
+        !remove
+    });
+    glb.remove_unused_accessors(&candidates)
 }
 
 pub fn add_clip(glb: &mut Glb, name: &str, channels: &[Channel]) -> Result<()> {
@@ -392,7 +413,7 @@ mod tests {
         let clips = read_clips(&glb).unwrap();
         assert_eq!(clips[0].name, "Walk");
         assert_eq!(clips[0].channels[0].times, vec![0.0, 1.0]);
-        remove_clip(&mut glb, "Walk");
+        remove_clips(&mut glb, &["Walk".to_owned()]).unwrap();
         assert!(clip_names(&glb).is_empty());
     }
 }

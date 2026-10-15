@@ -471,7 +471,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "retarjet"
+name = "rigaid"
 version = "0.1.0"
 dependencies = [
  "anyhow",

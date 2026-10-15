@@ -1,4 +1,4 @@
-# Retarjet
+# Rigaid
 
 ## Conventions
 

@@ -385,7 +385,7 @@ fn reference_pose(
     };
     let clip = clips.iter().find(|clip| clip.name == label).with_context(|| {
         format!(
-            "{} has no '{label}' clip to use as the reference pose. Create one with `retarjet pose {} --name {label}`.",
+            "{} has no '{label}' clip to use as the reference pose. Create one with `rigaid pose {} --name {label}`.",
             path.display(),
             path.display()
         )

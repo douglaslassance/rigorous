@@ -1,11 +1,11 @@
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 use retarjet::classify;
-use retarjet::commands::{self, PoseSource};
+use retarjet::commands::{self, Mode, PoseSource};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
 #[derive(Parser)]
-#[command(version, about = "Combine and retarget animations between GLB files")]
+#[command(version, about = "Retarget animations between GLB files")]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -13,47 +13,18 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Copy animations into a GLB that shares the same rig
+    /// Retarget animations onto a GLB, keeping the animations it already has
     Combine {
-        /// GLB to copy animations from
-        source: PathBuf,
-        /// GLB to add the animations to
-        destination: PathBuf,
+        #[command(flatten)]
+        retarget: RetargetArguments,
         /// Replace animations that already exist under the same name
         #[arg(long)]
         overwrite: bool,
-        /// Write the result here instead of updating the destination
-        #[arg(short, long)]
-        output: Option<PathBuf>,
     },
-    /// Retarget animations onto a GLB with a different rig
-    Transfer {
-        /// GLB to take animations from
-        source: PathBuf,
-        /// GLB to retarget the animations onto
-        destination: PathBuf,
-        /// Reference pose clip, one name for both files or one per file [default: each file's default pose]
-        #[arg(long, num_args = 1..=2, value_names = ["SOURCE", "DESTINATION"])]
-        pose: Vec<String>,
-        /// Facing axis (+x, -x, +z or -z), one for both files or one per file
-        #[arg(
-            long,
-            num_args = 1..=2,
-            value_names = ["SOURCE", "DESTINATION"],
-            default_value = "+z",
-            allow_hyphen_values = true,
-            value_parser = ["+x", "-x", "+z", "-z"],
-        )]
-        facing: Vec<String>,
-        /// Replace animations that already exist under the same name
-        #[arg(long)]
-        overwrite: bool,
-        /// Write the result here instead of updating the destination
-        #[arg(short, long)]
-        output: Option<PathBuf>,
-        /// Ollama model that classifies rigs without a stored classification
-        #[arg(long, env = "RETARJET_MODEL", default_value = classify::DEFAULT_MODEL)]
-        model: String,
+    /// Retarget animations onto a GLB, removing the animations it had
+    Replace {
+        #[command(flatten)]
+        retarget: RetargetArguments,
     },
     /// Write a single frame clip to use as a reference pose
     Pose {
@@ -88,32 +59,53 @@ enum Command {
     Info { file: PathBuf },
 }
 
+#[derive(Args)]
+struct RetargetArguments {
+    /// GLB to take animations from
+    source: PathBuf,
+    /// GLB to retarget the animations onto
+    destination: PathBuf,
+    /// Reference pose clip, one name for both files or one per file [default: each file's default pose]
+    #[arg(long, num_args = 1..=2, value_names = ["SOURCE", "DESTINATION"])]
+    pose: Vec<String>,
+    /// Facing axis (+x, -x, +z or -z), one for both files or one per file
+    #[arg(
+        long,
+        num_args = 1..=2,
+        value_names = ["SOURCE", "DESTINATION"],
+        default_value = "+z",
+        allow_hyphen_values = true,
+        value_parser = ["+x", "-x", "+z", "-z"],
+    )]
+    facing: Vec<String>,
+    /// Write the result here instead of updating the destination
+    #[arg(short, long)]
+    output: Option<PathBuf>,
+    /// Ollama model that classifies rigs without a stored classification
+    #[arg(long, env = "RETARJET_MODEL", default_value = classify::DEFAULT_MODEL)]
+    model: String,
+}
+
+fn retarget(arguments: RetargetArguments, mode: Mode) -> anyhow::Result<()> {
+    let options = commands::RetargetOptions {
+        poses: &arguments.pose,
+        facings: &arguments.facing,
+        mode,
+        output: arguments.output.as_deref(),
+        model: &arguments.model,
+    };
+    commands::retarget(&arguments.source, &arguments.destination, &options)
+}
+
 fn main() -> ExitCode {
     let result = match Cli::parse().command {
         Command::Combine {
-            source,
-            destination,
+            retarget: arguments,
             overwrite,
-            output,
-        } => commands::combine(&source, &destination, overwrite, output.as_deref()),
-        Command::Transfer {
-            source,
-            destination,
-            pose,
-            facing,
-            overwrite,
-            output,
-            model,
-        } => {
-            let options = commands::TransferOptions {
-                poses: &pose,
-                facings: &facing,
-                overwrite,
-                output: output.as_deref(),
-                model: &model,
-            };
-            commands::transfer(&source, &destination, &options)
-        }
+        } => retarget(arguments, Mode::Combine { overwrite }),
+        Command::Replace {
+            retarget: arguments,
+        } => retarget(arguments, Mode::Replace),
         Command::Pose {
             file,
             name,

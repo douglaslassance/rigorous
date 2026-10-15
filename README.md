@@ -1,6 +1,6 @@
 # retarjet
 
-Combine and retarget animations between GLB files from the command line.
+Retarget animations between GLB files from the command line.
 
 ## Install
 
@@ -17,22 +17,24 @@ ollama pull qwen2.5:32b
 ## Commands
 
 ```
-retarjet transfer <source> <destination> [--pose SOURCE [DESTINATION]] [--facing SOURCE [DESTINATION]] [--overwrite] [-o OUTPUT]
-retarjet combine <source> <destination> [--overwrite] [-o OUTPUT]
+retarjet combine <source> <destination> [--pose SOURCE [DESTINATION]] [--facing SOURCE [DESTINATION]] [--overwrite] [-o OUTPUT]
+retarjet replace <source> <destination> [--pose SOURCE [DESTINATION]] [--facing SOURCE [DESTINATION]] [-o OUTPUT]
 retarjet pose <file> [--name t-pose] [--from bind|default] [--overwrite] [-o OUTPUT]
 retarjet classify <file> [--force] [-o OUTPUT]
 retarjet info <file>
 ```
 
-Every command that writes updates the destination in place unless `-o` is given. A clip whose name already exists in the destination is skipped unless `--overwrite` is passed. Put options after the file arguments.
+Every command that writes updates the destination in place unless `-o` is given. Put options after the file arguments.
 
-- `transfer` retargets every clip of the source onto the destination's rig, which can have different bone names, hierarchy, proportions and bone axes.
-- `combine` copies clips between two files that share the same rig. It refuses rigs whose hierarchies differ and points you to `transfer`.
+`combine` and `replace` both retarget every clip of the source onto the destination's rig, which can have different bone names, hierarchy, proportions and bone axes.
+
+- `combine` keeps the destination's animations, so the result has both sets. A clip whose name already exists is skipped unless `--overwrite` is passed.
+- `replace` removes the destination's animations first, so the result only has the source's. A named destination reference pose clip is kept.
 - `pose` writes a single frame clip to use as a reference pose, captured from the skin's bind pose or the nodes' default transforms.
 - `classify` maps the rig's bones to anatomical roles and stores the result in the file.
 - `info` prints the skeleton, the stored classification and the clips.
 
-## How transfer works
+## How retargeting works
 
 ### Reference poses
 
@@ -55,8 +57,8 @@ For every key, each mapped bone's world rotation change from the source referenc
 ## Limitations
 
 - Classification covers humanoids only.
-- `transfer` writes rotations plus hips and root translation. Scale keys and morph target weights are not transferred.
-- Replacing a clip leaves its old data unreferenced in the binary chunk.
+- Retargeted clips hold rotations plus hips and root translation. Scale keys and morph target weights are not carried over.
+- Removed clips leave their data in the file when it uses an extension whose references retarjet cannot follow.
 - Sparse accessors, meshopt compression and external buffers are not supported yet.
 
 ## Development

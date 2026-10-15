@@ -140,9 +140,9 @@ fn assert_world_motion_matches(
 }
 
 #[test]
-fn transfer_matches_world_motion_between_rigs() {
+fn combine_matches_world_motion_between_rigs() {
     let paths = workspace("between_rigs", &["blue_goblin.glb", "green_goblin.glb"]);
-    let output = run(&["transfer", text(&paths[0]), text(&paths[1])]);
+    let output = run(&["combine", text(&paths[0]), text(&paths[1])]);
     assert!(output.status.success(), "{}", stderr(&output));
     assert!(stdout(&output).contains("Added 'Squat'"));
     assert_world_motion_matches(
@@ -155,10 +155,10 @@ fn transfer_matches_world_motion_between_rigs() {
 }
 
 #[test]
-fn transfer_matches_world_motion_from_a_partially_keyed_rig() {
+fn combine_matches_world_motion_from_a_partially_keyed_rig() {
     let paths = workspace("partially_keyed", &["red_goblin.glb", "blue_goblin.glb"]);
     let output = run(&[
-        "transfer",
+        "combine",
         text(&paths[0]),
         text(&paths[1]),
         "--pose",
@@ -175,10 +175,10 @@ fn transfer_matches_world_motion_from_a_partially_keyed_rig() {
 }
 
 #[test]
-fn transfer_turns_motion_to_the_destination_facing() {
+fn combine_turns_motion_to_the_destination_facing() {
     let paths = workspace("facing", &["blue_goblin.glb", "red_goblin.glb"]);
     let output = run(&[
-        "transfer",
+        "combine",
         text(&paths[0]),
         text(&paths[1]),
         "--facing",
@@ -197,9 +197,9 @@ fn transfer_turns_motion_to_the_destination_facing() {
 }
 
 #[test]
-fn transfer_scales_root_motion_by_hip_height() {
+fn combine_scales_root_motion_by_hip_height() {
     let paths = workspace("root_motion", &["blue_goblin.glb", "green_goblin.glb"]);
-    let output = stdout(&run(&["transfer", text(&paths[0]), text(&paths[1])]));
+    let output = stdout(&run(&["combine", text(&paths[0]), text(&paths[1])]));
     let mapped = output
         .lines()
         .find(|line| line.starts_with("Mapped"))
@@ -227,23 +227,23 @@ fn transfer_scales_root_motion_by_hip_height() {
 }
 
 #[test]
-fn transfer_skips_existing_clips_unless_overwriting() {
+fn combine_skips_existing_clips_unless_overwriting() {
     let paths = workspace("overwrite", &["blue_goblin.glb", "red_goblin.glb"]);
     let (source, destination) = (text(&paths[0]), text(&paths[1]));
     let pose = ["--pose", "t-pose"];
     assert!(
-        run(&[&["transfer", source, destination][..], &pose].concat())
+        run(&[&["combine", source, destination][..], &pose].concat())
             .status
             .success()
     );
     let count = animation::clip_names(&Glb::read(&paths[1]).unwrap()).len();
     let again = stdout(&run(
-        &[&["transfer", source, destination][..], &pose].concat()
+        &[&["combine", source, destination][..], &pose].concat()
     ));
     assert!(again.contains("Skipped 'Squat' (already exists"));
     assert!(again.contains("Nothing to write"));
     let replaced = stdout(&run(&[
-        &["transfer", source, destination, "--overwrite"][..],
+        &["combine", source, destination, "--overwrite"][..],
         &pose,
     ]
     .concat()));
@@ -251,22 +251,23 @@ fn transfer_skips_existing_clips_unless_overwriting() {
     let names = animation::clip_names(&Glb::read(&paths[1]).unwrap());
     assert_eq!(names.len(), count);
     assert_eq!(names.iter().filter(|name| *name == "t-pose").count(), 1);
+    assert_no_unused_data(&paths[1]);
 }
 
 #[test]
-fn transfer_without_pose_treats_pose_clips_as_regular_clips() {
+fn combine_without_pose_treats_pose_clips_as_regular_clips() {
     let paths = workspace("no_pose", &["blue_goblin.glb", "red_goblin.glb"]);
-    let output = stdout(&run(&["transfer", text(&paths[0]), text(&paths[1])]));
+    let output = stdout(&run(&["combine", text(&paths[0]), text(&paths[1])]));
     assert!(output.contains("Skipped 't-pose' (already exists"));
     assert!(output.contains("Added 'Squat'"));
 }
 
 #[test]
-fn transfer_leaves_the_rest_of_the_destination_untouched() {
+fn combine_leaves_the_rest_of_the_destination_untouched() {
     let paths = workspace("untouched", &["blue_goblin.glb", "green_goblin.glb"]);
     let before = Glb::read(&paths[1]).unwrap();
     assert!(
-        run(&["transfer", text(&paths[0]), text(&paths[1])])
+        run(&["combine", text(&paths[0]), text(&paths[1])])
             .status
             .success()
     );
@@ -277,10 +278,10 @@ fn transfer_leaves_the_rest_of_the_destination_untouched() {
 }
 
 #[test]
-fn transfer_explains_how_to_add_a_missing_reference_pose() {
+fn combine_explains_how_to_add_a_missing_reference_pose() {
     let paths = workspace("missing_pose", &["blue_goblin.glb", "green_goblin.glb"]);
     let output = run(&[
-        "transfer",
+        "combine",
         text(&paths[0]),
         text(&paths[1]),
         "--pose",
@@ -290,57 +291,45 @@ fn transfer_explains_how_to_add_a_missing_reference_pose() {
     assert!(stderr(&output).contains("--name a-pose"));
 }
 
-#[test]
-fn combine_adds_clips_from_a_matching_rig() {
-    let paths = workspace("combine", &["red_goblin.glb", "blue_goblin.glb"]);
-    let output = run(&["combine", text(&paths[0]), text(&paths[1])]);
-    assert!(output.status.success(), "{}", stderr(&output));
-    let printed = stdout(&output);
-    assert!(printed.contains("Added 'Lift_Left_Leg'"));
-    assert!(printed.contains("Skipped 'Idle_Pop_Loop' (already exists"));
-    let combined = Character::load(&paths[1]);
-    let source = Character::load(&paths[0]);
-    let source_clip = source.clip("Lift_Left_Leg");
-    let combined_clip = combined.clip("Lift_Left_Leg");
-    assert_eq!(source_clip.channels.len(), combined_clip.channels.len());
-    assert_eq!(
-        source_clip.channels[0].values,
-        combined_clip.channels[0].values
-    );
-}
-
-fn reparent(path: &Path, child: &str, parent: &str) {
-    let mut glb = Glb::read(path).unwrap();
-    let scene = Scene::new(&glb.json).unwrap();
-    let index = |name: &str| scene.names.iter().position(|node| node == name).unwrap() as u64;
-    let (child, parent) = (index(child), index(parent));
-    for node in glb.array_mut("nodes") {
-        if let Some(children) = node
-            .get_mut("children")
-            .and_then(|children| children.as_array_mut())
-        {
-            children.retain(|existing| existing.as_u64() != Some(child));
+/// Every accessor and buffer view in the file is still used by something.
+fn assert_no_unused_data(path: &Path) {
+    let glb = Glb::read(path).unwrap();
+    let mut accessors = std::collections::BTreeSet::new();
+    for skin in glb.array("skins") {
+        accessors.extend(skin["inverseBindMatrices"].as_u64());
+    }
+    for animation in glb.array("animations") {
+        for sampler in animation["samplers"].as_array().unwrap() {
+            accessors.extend(sampler["input"].as_u64());
+            accessors.extend(sampler["output"].as_u64());
         }
     }
-    let nodes = glb.array_mut("nodes");
-    let parent = &mut nodes[parent as usize];
-    match parent
-        .get_mut("children")
-        .and_then(|children| children.as_array_mut())
-    {
-        Some(children) => children.push(child.into()),
-        None => parent["children"] = serde_json::json!([child]),
-    }
-    glb.write(path).unwrap();
+    assert_eq!(accessors.len(), glb.array("accessors").len());
+    assert_eq!(glb.array("bufferViews").len(), glb.array("accessors").len());
 }
 
 #[test]
-fn combine_rejects_a_rig_with_a_different_hierarchy() {
-    let paths = workspace("combine_rejects", &["red_goblin.glb", "blue_goblin.glb"]);
-    reparent(&paths[0], "neck", "Spine01");
-    let output = run(&["combine", text(&paths[0]), text(&paths[1])]);
-    assert!(!output.status.success());
-    assert!(stderr(&output).contains("Use `retarjet transfer` instead"));
+fn replace_keeps_only_the_source_animations() {
+    let paths = workspace("replace", &["blue_goblin.glb", "red_goblin.glb"]);
+    let output = run(&[
+        "replace",
+        text(&paths[0]),
+        text(&paths[1]),
+        "--pose",
+        "t-pose",
+    ]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert!(stdout(&output).contains("Removed 'Lift_Left_Leg'"));
+    let names = animation::clip_names(&Glb::read(&paths[1]).unwrap());
+    assert_eq!(names, ["t-pose", "Idle_Pop_Loop", "Squat"]);
+    assert_no_unused_data(&paths[1]);
+    assert_world_motion_matches(
+        &Character::load(&paths[0]),
+        &Character::load(&paths[1]),
+        "Squat",
+        Some("t-pose"),
+        Quat::IDENTITY,
+    );
 }
 
 #[test]

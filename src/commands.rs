@@ -2,13 +2,12 @@
 
 use crate::animation::{self, Channel, Clip, Interpolation, Property};
 use crate::classify;
-use crate::glb::{Glb, as_usize};
+use crate::glb::{Cleanup, Glb};
 use crate::retarget::{self, Mapping, Rig};
 use crate::scene::{Scene, Transform};
 use crate::skeleton::{self, Skeleton};
 use crate::systems::{self, System};
 use anyhow::{Context, Result, bail};
-use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
 
 /// Report progress on stdout without failing when the reader has gone away, so the file still gets written.
@@ -19,118 +18,33 @@ macro_rules! say {
     }};
 }
 
-/// Combined rigs may differ by at most this share of animated nodes.
-const COMBINE_MISSING_TOLERANCE: f32 = 0.1;
-
 #[derive(Clone, Copy, Debug, clap::ValueEnum)]
 pub enum PoseSource {
     Bind,
     Default,
 }
 
-pub struct TransferOptions<'a> {
+/// What happens to the animations the destination already has.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Mode {
+    /// Keep them, replacing same named ones only when `overwrite` is set.
+    Combine { overwrite: bool },
+    /// Remove them, except the destination's reference pose clip.
+    Replace,
+}
+
+pub struct RetargetOptions<'a> {
     pub poses: &'a [String],
     pub facings: &'a [String],
-    pub overwrite: bool,
+    pub mode: Mode,
     pub output: Option<&'a Path>,
     pub model: &'a str,
 }
 
-pub fn combine(
+pub fn retarget(
     source_path: &Path,
     destination_path: &Path,
-    overwrite: bool,
-    output: Option<&Path>,
-) -> Result<()> {
-    let source = Glb::read(source_path)?;
-    let mut destination = Glb::read(destination_path)?;
-    let source_scene = Scene::new(&source.json)?;
-    let destination_scene = Scene::new(&destination.json)?;
-    let clips = animation::read_clips(&source)?;
-    if clips.is_empty() {
-        bail!("{} has no animations", source_path.display());
-    }
-    let lookup = NodeLookup::new(&destination_scene);
-    let animated: BTreeSet<usize> = clips
-        .iter()
-        .flat_map(|clip| clip.channels.iter().map(|channel| channel.node))
-        .collect();
-    let mut node_map = HashMap::new();
-    let mut missing = Vec::new();
-    for &node in &animated {
-        match lookup.find(&source_scene.names[node]) {
-            Some(target) => {
-                node_map.insert(node, target);
-            }
-            None => missing.push(source_scene.names[node].clone()),
-        }
-    }
-    if missing.len() as f32 > animated.len() as f32 * COMBINE_MISSING_TOLERANCE {
-        bail!(
-            "the rigs differ. {} of {} animated nodes have no match in {} ({}). Use `retarjet transfer` instead.",
-            missing.len(),
-            animated.len(),
-            destination_path.display(),
-            preview(&missing)
-        );
-    }
-    let mut reparented: Vec<String> = node_map
-        .iter()
-        .filter(|&(&node, &target)| {
-            let Some(parent) =
-                source_scene.parents[node].filter(|parent| animated.contains(parent))
-            else {
-                return false;
-            };
-            lookup.find(&source_scene.names[parent]) != destination_scene.parents[target]
-        })
-        .map(|(&node, _)| source_scene.names[node].clone())
-        .collect();
-    reparented.sort();
-    if !reparented.is_empty() {
-        bail!(
-            "the rigs differ. {} have a different parent in {}. Use `retarjet transfer` instead.",
-            preview(&reparented),
-            destination_path.display()
-        );
-    }
-    if !missing.is_empty() {
-        eprintln!(
-            "warning: skipping channels of nodes missing from the destination ({})",
-            preview(&missing)
-        );
-    }
-    let mut existing = animation::clip_names(&destination);
-    let mut changed = false;
-    for clip in &clips {
-        let channels: Vec<Channel> = clip
-            .channels
-            .iter()
-            .filter_map(|channel| {
-                let node = *node_map.get(&channel.node)?;
-                let compatible = channel.property != Property::Weights
-                    || morph_target_count(&destination, node) == Some(channel.width);
-                compatible.then(|| Channel {
-                    node,
-                    ..channel.clone()
-                })
-            })
-            .collect();
-        changed |= place(
-            &mut destination,
-            &mut existing,
-            &clip.name,
-            &channels,
-            overwrite,
-        )?;
-    }
-    finish(&mut destination, destination_path, output, changed)
-}
-
-pub fn transfer(
-    source_path: &Path,
-    destination_path: &Path,
-    options: &TransferOptions,
+    options: &RetargetOptions,
 ) -> Result<()> {
     let poses = per_file(options.poses);
     let (source_pose, destination_pose) = (
@@ -206,7 +120,16 @@ pub fn transfer(
         systems::store(&mut destination, host, &destination_systems)?;
         changed = true;
     }
-    let mut existing = animation::clip_names(&destination);
+    let existing = animation::clip_names(&destination);
+    let mut removals: Vec<String> = match options.mode {
+        Mode::Replace => existing
+            .iter()
+            .filter(|name| Some(name.as_str()) != destination_pose)
+            .cloned()
+            .collect(),
+        Mode::Combine { .. } => Vec::new(),
+    };
+    let mut additions = Vec::new();
     for clip in &source_clips {
         if Some(clip.name.as_str()) == source_pose {
             continue;
@@ -220,13 +143,42 @@ pub fn transfer(
         }
         let channels =
             retarget::retarget(clip, &source_rig, &destination_rig, &mapping, facing, scale);
-        changed |= place(
-            &mut destination,
-            &mut existing,
-            &clip.name,
-            &channels,
-            options.overwrite,
-        )?;
+        if channels.is_empty() {
+            say!(
+                "Skipped '{}' (no channel maps onto the destination)",
+                clip.name
+            );
+            continue;
+        }
+        let replaced = match options.mode {
+            Mode::Replace => false,
+            Mode::Combine { overwrite } => {
+                let exists = existing.contains(&clip.name);
+                if exists && !overwrite {
+                    say!(
+                        "Skipped '{}' (already exists, pass --overwrite to replace it)",
+                        clip.name
+                    );
+                    continue;
+                }
+                if exists {
+                    removals.push(clip.name.clone());
+                }
+                exists
+            }
+        };
+        additions.push((&clip.name, channels, replaced));
+    }
+    if options.mode == Mode::Replace {
+        for name in &removals {
+            say!("Removed '{name}'");
+        }
+    }
+    changed |= remove(&mut destination, &removals)?;
+    for (name, channels, replaced) in &additions {
+        animation::add_clip(&mut destination, name, channels)?;
+        say!("{} '{name}'", if *replaced { "Replaced" } else { "Added" });
+        changed = true;
     }
     finish(&mut destination, destination_path, options.output, changed)
 }
@@ -285,9 +237,17 @@ pub fn pose(
             ]
         })
         .collect();
-    let mut existing = animation::clip_names(&glb);
-    let changed = place(&mut glb, &mut existing, name, &channels, overwrite)?;
-    finish(&mut glb, path, output, changed)
+    let exists = animation::clip_names(&glb).iter().any(|clip| clip == name);
+    if exists && !overwrite {
+        say!("Skipped '{name}' (already exists, pass --overwrite to replace it)");
+        return finish(&mut glb, path, output, false);
+    }
+    if exists {
+        remove(&mut glb, &[name.to_owned()])?;
+    }
+    animation::add_clip(&mut glb, name, &channels)?;
+    say!("{} '{name}'", if exists { "Replaced" } else { "Added" });
+    finish(&mut glb, path, output, true)
 }
 
 pub fn classify(path: &Path, force: bool, output: Option<&Path>, model: &str) -> Result<()> {
@@ -471,30 +431,14 @@ fn systems_for(
     Ok((systems, true))
 }
 
-/// Add a clip under the overwrite rules, reporting what happened.
-fn place(
-    glb: &mut Glb,
-    existing: &mut Vec<String>,
-    name: &str,
-    channels: &[Channel],
-    overwrite: bool,
-) -> Result<bool> {
-    if channels.is_empty() {
-        say!("Skipped '{name}' (no channel maps onto the destination)");
+/// Remove clips and their data, warning when the data has to stay.
+fn remove(glb: &mut Glb, names: &[String]) -> Result<bool> {
+    if names.is_empty() {
         return Ok(false);
     }
-    let exists = existing.iter().any(|existing_name| existing_name == name);
-    if exists && !overwrite {
-        say!("Skipped '{name}' (already exists, pass --overwrite to replace it)");
-        return Ok(false);
+    if let Cleanup::Skipped(extension) = animation::remove_clips(glb, names)? {
+        eprintln!("warning: the removed clips' data stays in the file because it uses {extension}");
     }
-    if exists {
-        animation::remove_clips(glb, &[name.to_owned()])?;
-    } else {
-        existing.push(name.to_owned());
-    }
-    animation::add_clip(glb, name, channels)?;
-    say!("{} '{name}'", if exists { "Replaced" } else { "Added" });
     Ok(true)
 }
 
@@ -507,56 +451,4 @@ fn finish(glb: &mut Glb, destination: &Path, output: Option<&Path>, changed: boo
     glb.write(path)?;
     say!("Wrote {}", path.display());
     Ok(())
-}
-
-fn morph_target_count(glb: &Glb, node: usize) -> Option<usize> {
-    let mesh = as_usize(glb.array("nodes").get(node)?.get("mesh"))?;
-    let targets = glb
-        .array("meshes")
-        .get(mesh)?
-        .pointer("/primitives/0/targets")?
-        .as_array()?;
-    Some(targets.len())
-}
-
-fn preview(names: &[String]) -> String {
-    let shown: Vec<&str> = names.iter().take(5).map(String::as_str).collect();
-    let more = names.len().saturating_sub(shown.len());
-    if more > 0 {
-        format!("{} and {more} more", shown.join(", "))
-    } else {
-        shown.join(", ")
-    }
-}
-
-/// Finds nodes by exact name, then ignoring namespaces like `mixamorig:` and case.
-struct NodeLookup {
-    exact: HashMap<String, usize>,
-    loose: HashMap<String, usize>,
-}
-
-impl NodeLookup {
-    fn new(scene: &Scene) -> Self {
-        let mut exact = HashMap::new();
-        let mut loose = HashMap::new();
-        for (index, name) in scene.names.iter().enumerate() {
-            exact.entry(name.clone()).or_insert(index);
-            loose.entry(loose_name(name)).or_insert(index);
-        }
-        Self { exact, loose }
-    }
-
-    fn find(&self, name: &str) -> Option<usize> {
-        self.exact
-            .get(name)
-            .or_else(|| self.loose.get(&loose_name(name)))
-            .copied()
-    }
-}
-
-fn loose_name(name: &str) -> String {
-    name.rsplit([':', '|'])
-        .next()
-        .unwrap_or(name)
-        .to_lowercase()
 }

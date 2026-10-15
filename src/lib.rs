@@ -3,6 +3,7 @@
 pub mod animation;
 pub mod classify;
 pub mod glb;
+pub mod retarget;
 pub mod scene;
 pub mod skeleton;
 pub mod systems;

@@ -1,6 +1,7 @@
 //! The CLI commands.
 
 use crate::animation::{self, Channel, Clip, Interpolation, Property};
+use crate::cache;
 use crate::classify;
 use crate::glb::{Cleanup, Glb};
 use crate::retarget::{self, Mapping, Rig};
@@ -74,21 +75,8 @@ pub fn retarget(
         destination_path,
     )?;
 
-    let (source_systems, source_classified) = systems_for(
-        &source,
-        &source_scene,
-        &source_skeleton,
-        options.model,
-        source_path,
-    )?;
-    if source_classified {
-        eprintln!(
-            "hint: run `retarjet classify {}` to store this classification and skip it next time",
-            source_path.display()
-        );
-    }
-    let (destination_systems, destination_classified) = systems_for(
-        &destination,
+    let source_systems = systems_for(&source_scene, &source_skeleton, options.model, source_path)?;
+    let destination_systems = systems_for(
         &destination_scene,
         &destination_skeleton,
         options.model,
@@ -113,13 +101,6 @@ pub fn retarget(
     say!("Mapped {} bones, scale {scale:.3}", mapping.rotations.len());
 
     let mut changed = false;
-    if destination_classified {
-        let host = destination_skeleton
-            .host(&destination_scene)
-            .context("destination has no skeleton")?;
-        systems::store(&mut destination, host, &destination_systems)?;
-        changed = true;
-    }
     let existing = animation::clip_names(&destination);
     let mut removals: Vec<String> = match options.mode {
         Mode::Replace => existing
@@ -250,25 +231,23 @@ pub fn pose(
     finish(&mut glb, path, output, true)
 }
 
-pub fn classify(path: &Path, force: bool, output: Option<&Path>, model: &str) -> Result<()> {
-    let mut glb = Glb::read(path)?;
+pub fn classify(path: &Path, force: bool, model: &str) -> Result<()> {
+    let glb = Glb::read(path)?;
     let scene = Scene::new(&glb.json)?;
     let skeleton = skeleton_of(&glb, &scene, path)?;
-    if !force && let Some(systems) = systems::load(&glb, &skeleton.names(&scene)) {
+    let bones = skeleton.bones_with_parents(&scene);
+    let directory = cache::directory().context("no cache directory on this system")?;
+    if !force && let Some(systems) = cache::load_from(&directory, &bones) {
         say!(
-            "{} (already stored, pass --force to classify again)",
+            "{} (cached, pass --force to classify again)",
             systems::summary(&systems)
         );
+        say!("{}", cache::path_in(&directory, &bones).display());
         return Ok(());
     }
-    eprintln!("Classifying the rig in {} with {model}...", path.display());
-    let systems = classify::classify(&skeleton.bones_with_parents(&scene), model)?;
-    say!("{}", systems::summary(&systems));
-    let host = skeleton
-        .host(&scene)
-        .context("no skeleton to store the classification on")?;
-    systems::store(&mut glb, host, &systems)?;
-    finish(&mut glb, path, output, true)
+    classify_and_cache(&bones, model, path)?;
+    say!("{}", cache::path_in(&directory, &bones).display());
+    Ok(())
 }
 
 pub fn info(path: &Path) -> Result<()> {
@@ -280,7 +259,7 @@ pub fn info(path: &Path) -> Result<()> {
         "{}",
         skeleton::format_hierarchy(&skeleton.bones_with_parents(&scene))
     );
-    match systems::load(&glb, &skeleton.names(&scene)) {
+    match cache::load(&skeleton.bones_with_parents(&scene)) {
         Some(systems) => say!("\nClassified as {}", systems::summary(&systems)),
         None => say!("\nNot classified"),
     }
@@ -411,24 +390,32 @@ fn reference_pose(
     Ok(clip.pose(&scene.defaults, clip.start()))
 }
 
+/// The cached classification, or a fresh one that gets cached for next time.
 fn systems_for(
-    glb: &Glb,
     scene: &Scene,
     skeleton: &Skeleton,
     model: &str,
     path: &Path,
-) -> Result<(Vec<System>, bool)> {
-    if let Some(systems) = systems::load(glb, &skeleton.names(scene)) {
-        return Ok((systems, false));
+) -> Result<Vec<System>> {
+    let bones = skeleton.bones_with_parents(scene);
+    match cache::load(&bones) {
+        Some(systems) => Ok(systems),
+        None => classify_and_cache(&bones, model, path),
     }
+}
+
+fn classify_and_cache(bones: &cache::Bones, model: &str, path: &Path) -> Result<Vec<System>> {
     eprintln!("Classifying the rig in {} with {model}...", path.display());
-    let systems = classify::classify(&skeleton.bones_with_parents(scene), model)?;
+    let systems = classify::classify(bones, model)?;
     say!(
         "{} classified as {}",
         path.display(),
         systems::summary(&systems)
     );
-    Ok((systems, true))
+    if let Err(error) = cache::store(bones, &systems) {
+        eprintln!("warning: cannot cache the classification ({error:#})");
+    }
+    Ok(systems)
 }
 
 /// Remove clips and their data, warning when the data has to stay.

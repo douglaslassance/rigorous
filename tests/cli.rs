@@ -1,7 +1,8 @@
-//! End to end tests on the goblin fixtures, which carry a `t-pose` clip and a stored classification.
+//! End to end tests on the goblin fixtures, which carry a `t-pose` clip and a classification next to them.
 
 use glam::{Mat4, Quat};
 use retarjet::animation::{self, Clip};
+use retarjet::cache;
 use retarjet::glb::Glb;
 use retarjet::scene::{Scene, rotation_of};
 use retarjet::skeleton::Skeleton;
@@ -18,25 +19,47 @@ fn fixture(name: &str) -> PathBuf {
         .join(name)
 }
 
-/// Copy fixtures into a directory owned by one test.
-fn workspace(test: &str, names: &[&str]) -> Vec<PathBuf> {
+struct Workspace {
+    paths: Vec<PathBuf>,
+    cache: PathBuf,
+}
+
+/// Copy fixtures into a directory owned by one test, with their classifications in its own cache.
+fn workspace(test: &str, names: &[&str]) -> Workspace {
     let directory = std::env::temp_dir().join(format!("retarjet-{}-{test}", std::process::id()));
+    let cache = directory.join("cache");
     std::fs::create_dir_all(&directory).unwrap();
-    names
+    let paths = names
         .iter()
         .map(|name| {
             let path = directory.join(name);
             std::fs::copy(fixture(name), &path).unwrap();
+            let glb = Glb::read(&path).unwrap();
+            let scene = Scene::new(&glb.json).unwrap();
+            let skeleton = Skeleton::new(&glb, &scene);
+            let classification = fixture(name).with_extension("classification.json");
+            let data =
+                serde_json::from_str(&std::fs::read_to_string(classification).unwrap()).unwrap();
+            let systems = systems::parse(&data, &skeleton.names(&scene));
+            cache::store_in(&cache, &skeleton.bones_with_parents(&scene), &systems).unwrap();
             path
         })
-        .collect()
+        .collect();
+    Workspace { paths, cache }
 }
 
-fn run(arguments: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_retarjet"))
-        .args(arguments)
-        .output()
-        .unwrap()
+impl Workspace {
+    fn run(&self, arguments: &[&str]) -> Output {
+        Command::new(env!("CARGO_BIN_EXE_retarjet"))
+            .env(cache::DIRECTORY_VARIABLE, &self.cache)
+            .args(arguments)
+            .output()
+            .unwrap()
+    }
+
+    fn character(&self, path: &Path) -> Character {
+        Character::load(path, &self.cache)
+    }
 }
 
 fn text(path: &Path) -> &str {
@@ -59,12 +82,12 @@ struct Character {
 }
 
 impl Character {
-    fn load(path: &Path) -> Self {
+    fn load(path: &Path, cache: &Path) -> Self {
         let glb = Glb::read(path).unwrap();
         let scene = Scene::new(&glb.json).unwrap();
         let skeleton = Skeleton::new(&glb, &scene);
-        let systems =
-            systems::load(&glb, &skeleton.names(&scene)).expect("fixture stores a classification");
+        let systems = cache::load_from(cache, &skeleton.bones_with_parents(&scene))
+            .expect("the workspace caches every fixture's classification");
         let clips = animation::read_clips(&glb).unwrap();
         Self {
             scene,
@@ -141,13 +164,14 @@ fn assert_world_motion_matches(
 
 #[test]
 fn combine_matches_world_motion_between_rigs() {
-    let paths = workspace("between_rigs", &["blue_goblin.glb", "green_goblin.glb"]);
-    let output = run(&["combine", text(&paths[0]), text(&paths[1])]);
+    let workspace = workspace("between_rigs", &["blue_goblin.glb", "green_goblin.glb"]);
+    let paths = &workspace.paths;
+    let output = workspace.run(&["combine", text(&paths[0]), text(&paths[1])]);
     assert!(output.status.success(), "{}", stderr(&output));
     assert!(stdout(&output).contains("Added 'Squat'"));
     assert_world_motion_matches(
-        &Character::load(&paths[0]),
-        &Character::load(&paths[1]),
+        &workspace.character(&paths[0]),
+        &workspace.character(&paths[1]),
         "Squat",
         None,
         Quat::IDENTITY,
@@ -156,8 +180,9 @@ fn combine_matches_world_motion_between_rigs() {
 
 #[test]
 fn combine_matches_world_motion_from_a_partially_keyed_rig() {
-    let paths = workspace("partially_keyed", &["red_goblin.glb", "blue_goblin.glb"]);
-    let output = run(&[
+    let workspace = workspace("partially_keyed", &["red_goblin.glb", "blue_goblin.glb"]);
+    let paths = &workspace.paths;
+    let output = workspace.run(&[
         "combine",
         text(&paths[0]),
         text(&paths[1]),
@@ -166,8 +191,8 @@ fn combine_matches_world_motion_from_a_partially_keyed_rig() {
     ]);
     assert!(output.status.success(), "{}", stderr(&output));
     assert_world_motion_matches(
-        &Character::load(&paths[0]),
-        &Character::load(&paths[1]),
+        &workspace.character(&paths[0]),
+        &workspace.character(&paths[1]),
         "Lift_Left_Leg",
         Some("t-pose"),
         Quat::IDENTITY,
@@ -176,8 +201,9 @@ fn combine_matches_world_motion_from_a_partially_keyed_rig() {
 
 #[test]
 fn combine_turns_motion_to_the_destination_facing() {
-    let paths = workspace("facing", &["blue_goblin.glb", "red_goblin.glb"]);
-    let output = run(&[
+    let workspace = workspace("facing", &["blue_goblin.glb", "red_goblin.glb"]);
+    let paths = &workspace.paths;
+    let output = workspace.run(&[
         "combine",
         text(&paths[0]),
         text(&paths[1]),
@@ -188,8 +214,8 @@ fn combine_turns_motion_to_the_destination_facing() {
     assert!(output.status.success(), "{}", stderr(&output));
     let half_turn = Quat::from_rotation_y(std::f32::consts::PI);
     assert_world_motion_matches(
-        &Character::load(&paths[0]),
-        &Character::load(&paths[1]),
+        &workspace.character(&paths[0]),
+        &workspace.character(&paths[1]),
         "Squat",
         None,
         half_turn,
@@ -198,15 +224,16 @@ fn combine_turns_motion_to_the_destination_facing() {
 
 #[test]
 fn combine_scales_root_motion_by_hip_height() {
-    let paths = workspace("root_motion", &["blue_goblin.glb", "green_goblin.glb"]);
-    let output = stdout(&run(&["combine", text(&paths[0]), text(&paths[1])]));
+    let workspace = workspace("root_motion", &["blue_goblin.glb", "green_goblin.glb"]);
+    let paths = &workspace.paths;
+    let output = stdout(&workspace.run(&["combine", text(&paths[0]), text(&paths[1])]));
     let mapped = output
         .lines()
         .find(|line| line.starts_with("Mapped"))
         .unwrap();
     let scale: f32 = mapped.rsplit(' ').next().unwrap().parse().unwrap();
-    let source = Character::load(&paths[0]);
-    let destination = Character::load(&paths[1]);
+    let source = workspace.character(&paths[0]);
+    let destination = workspace.character(&paths[1]);
     let (source_hips, destination_hips) = (source.node("Hips"), destination.node("Hips"));
     let source_reference = source.reference(None)[source_hips].w_axis.truncate();
     let destination_reference = destination.reference(None)[destination_hips]
@@ -228,25 +255,23 @@ fn combine_scales_root_motion_by_hip_height() {
 
 #[test]
 fn combine_skips_existing_clips_unless_overwriting() {
-    let paths = workspace("overwrite", &["blue_goblin.glb", "red_goblin.glb"]);
+    let workspace = workspace("overwrite", &["blue_goblin.glb", "red_goblin.glb"]);
+    let paths = &workspace.paths;
     let (source, destination) = (text(&paths[0]), text(&paths[1]));
     let pose = ["--pose", "t-pose"];
     assert!(
-        run(&[&["combine", source, destination][..], &pose].concat())
+        workspace
+            .run(&[&["combine", source, destination][..], &pose].concat())
             .status
             .success()
     );
     let count = animation::clip_names(&Glb::read(&paths[1]).unwrap()).len();
-    let again = stdout(&run(
-        &[&["combine", source, destination][..], &pose].concat()
-    ));
+    let again = stdout(&workspace.run(&[&["combine", source, destination][..], &pose].concat()));
     assert!(again.contains("Skipped 'Squat' (already exists"));
     assert!(again.contains("Nothing to write"));
-    let replaced = stdout(&run(&[
-        &["combine", source, destination, "--overwrite"][..],
-        &pose,
-    ]
-    .concat()));
+    let replaced = stdout(
+        &workspace.run(&[&["combine", source, destination, "--overwrite"][..], &pose].concat()),
+    );
     assert!(replaced.contains("Replaced 'Squat'"));
     let names = animation::clip_names(&Glb::read(&paths[1]).unwrap());
     assert_eq!(names.len(), count);
@@ -256,18 +281,21 @@ fn combine_skips_existing_clips_unless_overwriting() {
 
 #[test]
 fn combine_without_pose_treats_pose_clips_as_regular_clips() {
-    let paths = workspace("no_pose", &["blue_goblin.glb", "red_goblin.glb"]);
-    let output = stdout(&run(&["combine", text(&paths[0]), text(&paths[1])]));
+    let workspace = workspace("no_pose", &["blue_goblin.glb", "red_goblin.glb"]);
+    let paths = &workspace.paths;
+    let output = stdout(&workspace.run(&["combine", text(&paths[0]), text(&paths[1])]));
     assert!(output.contains("Skipped 't-pose' (already exists"));
     assert!(output.contains("Added 'Squat'"));
 }
 
 #[test]
 fn combine_leaves_the_rest_of_the_destination_untouched() {
-    let paths = workspace("untouched", &["blue_goblin.glb", "green_goblin.glb"]);
+    let workspace = workspace("untouched", &["blue_goblin.glb", "green_goblin.glb"]);
+    let paths = &workspace.paths;
     let before = Glb::read(&paths[1]).unwrap();
     assert!(
-        run(&["combine", text(&paths[0]), text(&paths[1])])
+        workspace
+            .run(&["combine", text(&paths[0]), text(&paths[1])])
             .status
             .success()
     );
@@ -279,8 +307,9 @@ fn combine_leaves_the_rest_of_the_destination_untouched() {
 
 #[test]
 fn combine_explains_how_to_add_a_missing_reference_pose() {
-    let paths = workspace("missing_pose", &["blue_goblin.glb", "green_goblin.glb"]);
-    let output = run(&[
+    let workspace = workspace("missing_pose", &["blue_goblin.glb", "green_goblin.glb"]);
+    let paths = &workspace.paths;
+    let output = workspace.run(&[
         "combine",
         text(&paths[0]),
         text(&paths[1]),
@@ -310,8 +339,9 @@ fn assert_no_unused_data(path: &Path) {
 
 #[test]
 fn replace_keeps_only_the_source_animations() {
-    let paths = workspace("replace", &["blue_goblin.glb", "red_goblin.glb"]);
-    let output = run(&[
+    let workspace = workspace("replace", &["blue_goblin.glb", "red_goblin.glb"]);
+    let paths = &workspace.paths;
+    let output = workspace.run(&[
         "replace",
         text(&paths[0]),
         text(&paths[1]),
@@ -324,8 +354,8 @@ fn replace_keeps_only_the_source_animations() {
     assert_eq!(names, ["t-pose", "Idle_Pop_Loop", "Squat"]);
     assert_no_unused_data(&paths[1]);
     assert_world_motion_matches(
-        &Character::load(&paths[0]),
-        &Character::load(&paths[1]),
+        &workspace.character(&paths[0]),
+        &workspace.character(&paths[1]),
         "Squat",
         Some("t-pose"),
         Quat::IDENTITY,
@@ -333,15 +363,30 @@ fn replace_keeps_only_the_source_animations() {
 }
 
 #[test]
+fn classify_reads_the_cache_and_leaves_the_file_alone() {
+    let workspace = workspace("classify", &["red_goblin.glb"]);
+    let before = std::fs::read(&workspace.paths[0]).unwrap();
+    let output = stdout(&workspace.run(&["classify", text(&workspace.paths[0])]));
+    assert!(output.contains("(cached, pass --force"));
+    assert!(output.contains(text(&workspace.cache)));
+    assert_eq!(std::fs::read(&workspace.paths[0]).unwrap(), before);
+}
+
+#[test]
 fn pose_replaces_an_existing_clip_only_when_asked() {
-    let paths = workspace("pose", &["blue_goblin.glb"]);
-    assert!(stdout(&run(&["pose", text(&paths[0])])).contains("Skipped 't-pose'"));
-    assert!(stdout(&run(&["pose", text(&paths[0]), "--overwrite"])).contains("Replaced 't-pose'"));
+    let workspace = workspace("pose", &["blue_goblin.glb"]);
+    let paths = &workspace.paths;
+    assert!(stdout(&workspace.run(&["pose", text(&paths[0])])).contains("Skipped 't-pose'"));
+    assert!(
+        stdout(&workspace.run(&["pose", text(&paths[0]), "--overwrite"]))
+            .contains("Replaced 't-pose'")
+    );
 }
 
 #[test]
 fn info_lists_skeleton_classification_and_clips() {
-    let printed = stdout(&run(&["info", text(&fixture("green_goblin.glb"))]));
+    let workspace = workspace("info", &["green_goblin.glb"]);
+    let printed = stdout(&workspace.run(&["info", text(&workspace.paths[0])]));
     assert!(
         printed.contains("24 joints"),
         "the animated Spine node between skin joints counts"

@@ -1,13 +1,8 @@
 //! Rig systems in yello's schema, and the role based bone pairing built on them.
 
-use crate::glb::Glb;
-use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashMap};
-
-/// Extras key shared with the yello Blender extension.
-pub const PROPERTY: &str = "yello_systems";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Side {
@@ -272,36 +267,6 @@ pub fn summary(systems: &[System]) -> String {
     labels.join(", ")
 }
 
-pub fn load(glb: &Glb, bone_names: &[String]) -> Option<Vec<System>> {
-    let stored = glb
-        .array("skins")
-        .iter()
-        .chain(glb.array("nodes"))
-        .find_map(|item| item.get("extras")?.get(PROPERTY))?;
-    let value = match stored {
-        Value::String(text) => serde_json::from_str(text).ok()?,
-        other => other.clone(),
-    };
-    let systems = parse(&value, bone_names);
-    (!systems.is_empty()).then_some(systems)
-}
-
-/// Store as a JSON string on the node's extras, the same shape yello writes.
-pub fn store(glb: &mut Glb, node: usize, systems: &[System]) -> Result<()> {
-    let text = serde_json::to_string(systems)?;
-    let node = glb
-        .array_mut("nodes")
-        .get_mut(node)
-        .context("metadata node does not exist")?;
-    let object = node.as_object_mut().context("node is not an object")?;
-    let extras = object.entry("extras").or_insert_with(|| json!({}));
-    if !extras.is_object() {
-        *extras = json!({});
-    }
-    extras[PROPERTY] = json!(text);
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -372,20 +337,5 @@ mod tests {
         assert!(pairs.contains(&("Hips".into(), "pelvis".into())));
         assert!(pairs.contains(&("S1".into(), "spine_01".into())));
         assert!(pairs.contains(&("S3".into(), "spine_02".into())));
-    }
-
-    #[test]
-    fn store_then_load_round_trips() {
-        let mut glb = Glb {
-            json: json!({"nodes": [{"name": "Armature"}]}),
-            bin: Vec::new(),
-        };
-        let systems = vec![System::Head {
-            parent: None,
-            neck: Some("Neck".into()),
-            head: "Head".into(),
-        }];
-        store(&mut glb, 0, &systems).unwrap();
-        assert_eq!(load(&glb, &names(&["Neck", "Head"])), Some(systems));
     }
 }

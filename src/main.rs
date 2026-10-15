@@ -42,15 +42,12 @@ enum Command {
         #[arg(short, long)]
         output: Option<PathBuf>,
     },
-    /// Classify the rig with a local model and store the result in the file
+    /// Classify the rig with a local model and cache the result
     Classify {
         file: PathBuf,
-        /// Classify again even if the file already stores a classification
+        /// Classify again even if the rig is already cached
         #[arg(long)]
         force: bool,
-        /// Write the result here instead of updating the file
-        #[arg(short, long)]
-        output: Option<PathBuf>,
         /// Ollama model to classify with
         #[arg(long, env = "RETARJET_MODEL", default_value = classify::DEFAULT_MODEL)]
         model: String,
@@ -81,7 +78,7 @@ struct RetargetArguments {
     /// Write the result here instead of updating the destination
     #[arg(short, long)]
     output: Option<PathBuf>,
-    /// Ollama model that classifies rigs without a stored classification
+    /// Ollama model that classifies rigs without a cached classification
     #[arg(long, env = "RETARJET_MODEL", default_value = classify::DEFAULT_MODEL)]
     model: String,
 }
@@ -113,12 +110,7 @@ fn main() -> ExitCode {
             overwrite,
             output,
         } => commands::pose(&file, &name, from, overwrite, output.as_deref()),
-        Command::Classify {
-            file,
-            force,
-            output,
-            model,
-        } => commands::classify(&file, force, output.as_deref(), &model),
+        Command::Classify { file, force, model } => commands::classify(&file, force, &model),
         Command::Info { file } => commands::info(&file),
     };
     match result {

@@ -1,6 +1,7 @@
 //! Combine and retarget animations between GLB files.
 
 pub mod animation;
+pub mod cache;
 pub mod classify;
 pub mod commands;
 pub mod glb;

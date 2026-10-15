@@ -20,7 +20,7 @@ ollama pull qwen2.5:32b
 retarjet combine <source> <destination> [--pose SOURCE [DESTINATION]] [--facing SOURCE [DESTINATION]] [--overwrite] [-o OUTPUT]
 retarjet replace <source> <destination> [--pose SOURCE [DESTINATION]] [--facing SOURCE [DESTINATION]] [-o OUTPUT]
 retarjet pose <file> [--name t-pose] [--from bind|default] [--overwrite] [-o OUTPUT]
-retarjet classify <file> [--force] [-o OUTPUT]
+retarjet classify <file> [--force]
 retarjet info <file>
 ```
 
@@ -31,8 +31,10 @@ Every command that writes updates the destination in place unless `-o` is given.
 - `combine` keeps the destination's animations, so the result has both sets. A clip whose name already exists is skipped unless `--overwrite` is passed.
 - `replace` removes the destination's animations first, so the result only has the source's. A named destination reference pose clip is kept.
 - `pose` writes a single frame clip to use as a reference pose, captured from the skin's bind pose or the nodes' default transforms.
-- `classify` maps the rig's bones to anatomical roles and stores the result in the file.
-- `info` prints the skeleton, the stored classification and the clips.
+- `classify` maps the rig's bones to anatomical roles, caches the result and prints where the cache file is.
+- `info` prints the skeleton, the cached classification and the clips.
+
+retarjet only ever writes animation clips into a GLB.
 
 ## How retargeting works
 
@@ -44,7 +46,9 @@ When they don't (one in a T-pose and the other in an A-pose, for example), give 
 
 ### Bone mapping
 
-Bones are classified into rig systems (spine, arms, legs, head and fingers) with the same prompts and schema as the [yello](https://github.com/playsthetic/yello) Blender extension. The classification is stored as `extras.yello_systems` on the armature node, so it runs once per character and can be edited by hand. Two rigs are then paired role by role. Chains of different lengths, such as a three bone spine onto a two bone spine, are spread end to end.
+Bones are classified into rig systems (spine, arms, legs, head and fingers) with the same prompts and schema as the [yello](https://github.com/playsthetic/yello) Blender extension. Two rigs are then paired role by role. Chains of different lengths, such as a three bone spine onto a two bone spine, are spread end to end.
+
+Classifications are cached on your machine (`~/Library/Caches/retarjet` on macOS, `~/.cache/retarjet` on Linux, or `RETARJET_CACHE`), keyed by the skeleton's bone names and hierarchy. Each rig is classified once, and renaming or reparenting a bone classifies it again. Edit a cache file to fix a wrong mapping.
 
 ### Retargeting
 
@@ -67,7 +71,7 @@ For every key, each mapped bone's world rotation change from the source referenc
 cargo test
 ```
 
-The test fixtures in `tests/fixtures` are characters stripped to their nodes, skins and animations, with a `t-pose` clip and a stored classification. Regenerate one with the following command, then run `retarjet pose` and `retarjet classify` on it.
+The test fixtures in `tests/fixtures` are characters stripped to their nodes, skins and animations, with a `t-pose` clip. Each has a `.classification.json` next to it that the tests load into a private cache, so they never need Ollama. Regenerate a fixture with the following command, run `retarjet pose` on it, then copy the file `retarjet classify` prints next to it.
 
 ```bash
 python3 -I tests/fixtures/strip.py SOURCE.glb tests/fixtures/NAME.glb

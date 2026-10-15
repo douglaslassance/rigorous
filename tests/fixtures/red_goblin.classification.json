@@ -1,0 +1,55 @@
+{
+  "systems": [
+    {
+      "type": "spine",
+      "pelvis": "Hips",
+      "vertebrae": [
+        "Spine02",
+        "Spine01",
+        "Spine"
+      ]
+    },
+    {
+      "type": "arm",
+      "side": "L",
+      "parent": "Spine",
+      "shoulder": "LeftShoulder",
+      "upper_arm": "LeftArm",
+      "forearm": "LeftForeArm",
+      "hand": "LeftHand"
+    },
+    {
+      "type": "arm",
+      "side": "R",
+      "parent": "Spine",
+      "shoulder": "RightShoulder",
+      "upper_arm": "RightArm",
+      "forearm": "RightForeArm",
+      "hand": "RightHand"
+    },
+    {
+      "type": "leg",
+      "side": "L",
+      "parent": "Hips",
+      "upper_leg": "LeftUpLeg",
+      "lower_leg": "LeftLeg",
+      "foot": "LeftFoot",
+      "toe": "LeftToeBase"
+    },
+    {
+      "type": "leg",
+      "side": "R",
+      "parent": "Hips",
+      "upper_leg": "RightUpLeg",
+      "lower_leg": "RightLeg",
+      "foot": "RightFoot",
+      "toe": "RightToeBase"
+    },
+    {
+      "type": "head",
+      "parent": "Spine",
+      "neck": "neck",
+      "head": "Head"
+    }
+  ]
+}

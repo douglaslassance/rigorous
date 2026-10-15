@@ -123,15 +123,6 @@ impl Skeleton {
         }
         root
     }
-
-    /// Node that stores rig metadata: the armature node above the joints, else the top joint.
-    pub fn host(&self, scene: &Scene) -> Option<usize> {
-        let top = *self.joints.first()?;
-        match scene.parents[top] {
-            Some(parent) if !self.contains(parent) => Some(parent),
-            _ => Some(top),
-        }
-    }
 }
 
 /// Local transforms that put every skinned joint in its bind pose.
@@ -273,7 +264,6 @@ mod tests {
         );
         let skeleton = Skeleton::new(&glb, &scene);
         assert_eq!(skeleton.joints, vec![1]);
-        assert_eq!(skeleton.host(&scene), Some(0));
     }
 
     #[test]

@@ -52,7 +52,7 @@ enum Command {
         #[arg(short, long)]
         output: Option<PathBuf>,
         /// Ollama model that classifies rigs without a stored classification
-        #[arg(long, env = "RETARGEIZER_MODEL", default_value = classify::DEFAULT_MODEL)]
+        #[arg(long, env = "RETARJET_MODEL", default_value = classify::DEFAULT_MODEL)]
         model: String,
     },
     /// Write a single frame clip to use as a reference pose
@@ -81,7 +81,7 @@ enum Command {
         #[arg(short, long)]
         output: Option<PathBuf>,
         /// Ollama model to classify with
-        #[arg(long, env = "RETARGEIZER_MODEL", default_value = classify::DEFAULT_MODEL)]
+        #[arg(long, env = "RETARJET_MODEL", default_value = classify::DEFAULT_MODEL)]
         model: String,
     },
     /// Show the skeleton, classification and clips of a GLB

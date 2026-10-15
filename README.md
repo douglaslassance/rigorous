@@ -1,6 +1,6 @@
 # rigorous
 
-Retarget animations between GLB files from the command line.
+A command line toolkit for rigging GLB characters. It currently covers animation retargeting.
 
 ## Install
 
@@ -31,7 +31,7 @@ Commands that write update the file in place unless `-o` is given. Put options a
 - `classify` maps the rig's bones to anatomical roles, caches the result and prints where the cache file is.
 - `info` prints the skeleton, the cached classification and the clips.
 
-rigorous only ever writes animation clips into a GLB.
+rigorous never stores its own data, such as bone classifications, in your files.
 
 ## How retargeting works
 

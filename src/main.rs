@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 #[derive(Parser)]
-#[command(version, about = "Retarget animations between GLB files")]
+#[command(version, about = "Rigging tools for GLB characters")]
 struct Cli {
     #[command(subcommand)]
     command: Command,
